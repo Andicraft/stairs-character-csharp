@@ -5,7 +5,8 @@ public partial class StairsCharacter : CharacterBody3D
 	[ExportCategory("Stair Stepping")]
 	[Export] private float _stepHeight = 0.33f;
 	[Export] private float _stepMargin = 0.1f;
-	
+
+	private float _cylinderRadius = 0.5f;
 	private CollisionShape3D _separator;
 	private RayCast3D _rayCast;
 	private float _rayShapeLocalHeight;
@@ -16,7 +17,7 @@ public partial class StairsCharacter : CharacterBody3D
 		{
 			if (node is not CollisionShape3D col) continue;
 		
-			if (col.Shape is not CapsuleShape3D capsule)
+			if (col.Shape is not CapsuleShape3D collider)
 			{
 				GD.PrintErr("StairCharacter's collider must use a CapsuleShape3D!");
 				break;
@@ -36,7 +37,8 @@ public partial class StairsCharacter : CharacterBody3D
 			_rayCast.ExcludeParent = true;
 			_rayCast.Enabled = false;
 
-			_rayShapeLocalHeight = col.Position.Y - capsule.Height * 0.5f + _stepHeight;
+			_rayShapeLocalHeight = col.Position.Y - collider.Height * 0.5f + _stepHeight;
+			_cylinderRadius = collider.Radius;
 			AddChild(_separator);
 			AddChild(_rayCast);
 			_separator.TranslateObjectLocal(_rayShapeLocalHeight * Vector3.Down);
@@ -57,7 +59,12 @@ public partial class StairsCharacter : CharacterBody3D
 		}
 
 		var localPos = ToLocal(GetLastSlideCollision().GetPosition());
-		localPos.Y = _rayShapeLocalHeight+_stepMargin;
+		localPos.Y = 0;
+
+		var dir = (localPos * new Vector3(1, 0, 1)).Normalized();
+		localPos += dir * _stepMargin;
+		localPos = localPos.LimitLength(_cylinderRadius + _stepMargin);
+		localPos.Y = _rayShapeLocalHeight;
 
 		_rayCast.Position = localPos;
 		_rayCast.ForceUpdateTransform();
