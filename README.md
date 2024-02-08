@@ -2,11 +2,12 @@
 
 A simple to use class that enables your CharacterBody3D to handle stairs properly.
 
+Mainly tested with the Jolt physics engine and cylinder colliders, not guaranteed to work well with anything else - but try it!
+
 ## Usage instructions:
 
 1. Make your character controller extend `StairsCharacter` instead of `CharacterBody3D`.
-2. Call `HandleStairs()` before calling `MoveAndSlide()`.
-3. Done!
-
-
-If your controller uses multiple colliders, make sure the one closest to the ground is the first in the list. The C# version currently assumes the collider's shape is a `CapsuleShape3D`, but that should be easy to change in the code if you need it to use a different shape.
+2. Ensure your character's collider is named 'Collider'.
+3. Every frame, set `DesiredVelocity` to the desired direction of movement.
+4. Call `MoveAndStairStep()` instead of calling `MoveAndSlide()`.
+5. Done!

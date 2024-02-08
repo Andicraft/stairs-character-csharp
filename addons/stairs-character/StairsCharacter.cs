@@ -3,82 +3,142 @@ using Godot;
 public partial class StairsCharacter : CharacterBody3D
 {
 	[ExportCategory("Stair Stepping")]
-	[Export] private float _stepHeight = 0.33f;
-	[Export] private float _stepMargin = 0.1f;
+	[Export] protected float _stepHeight = 0.33f;
 
-	private float _cylinderRadius = 0.5f;
-	private CollisionShape3D _separator;
-	private RayCast3D _rayCast;
-	private float _rayShapeLocalHeight;
+	// Holds the margin from the player's Collider.
+	private float _colliderMargin;
+
+	// Use WasGrounded instead of IsOnFloor() - because of the stair step mechanism, sometimes this
+	// script will snap the player to the floor, but IsOnFloor() will still read as false.
+	public bool Grounded;
+	public bool WasGrounded;
+	
+	// Force a stair step check this frame
+	// I use this for things like wall jumps, where it feels like you _should've_ been able to land on a ledge but
+	// snagged just below it.
+	public bool ForceStairStep;
+
+	// Similarly, you can modify this and it will reset after the frame.
+	// If set, will be used in place of _stepHeight.
+	public float TempStepHeight = 0f;
+	
+	// Used to filter out the Y velocity from the player when checking stair steps.
+	private readonly Vector3 _horizontal = new Vector3(1, 0, 1);
+
+	// DesiredVelocity should be set in your character controller just so we know where we _want_ to go.
+	// Gets reset at the start of every frame - should match the direction where your input wants to take you.
+	protected Vector3 DesiredVelocity = Vector3.Zero;
 	
 	public override void _Ready()
 	{
-		foreach (var node in GetChildren())
-		{
-			if (node is not CollisionShape3D col) continue;
+		base._Ready();
 		
-			if (col.Shape is not CapsuleShape3D collider)
-			{
-				GD.PrintErr("StairCharacter's collider must use a CapsuleShape3D!");
-				break;
-			}
-			
-			// Create the separator node
-			_separator = new CollisionShape3D();
-			_separator.RotationDegrees = new Vector3(90, 0, 0);
-			var shape = new SeparationRayShape3D();
-			shape.Length = _stepHeight;
-			_separator.Shape = shape;
-
-			// Create raycast node (cheaper than raycasting from code)
-			_rayCast = new RayCast3D();
-			_rayCast.TargetPosition = Vector3.Down * _stepHeight;
-			_rayCast.CollisionMask = CollisionMask;
-			_rayCast.ExcludeParent = true;
-			_rayCast.Enabled = false;
-
-			_rayShapeLocalHeight = col.Position.Y - collider.Height * 0.5f + _stepHeight;
-			_cylinderRadius = collider.Radius;
-			AddChild(_separator);
-			AddChild(_rayCast);
-			_separator.TranslateObjectLocal(_rayShapeLocalHeight * Vector3.Down);
-			
-			break;
-		}
+		// Only requirement for your Player scene is that your collider is named Collider.
+		// Your margin should be set real low or it starts snagging on everything - 0.001 works for me.
+		_colliderMargin = GetNode<CollisionShape3D>("Collider").Shape.Margin;
+		
+		if (_colliderMargin > 0.01f)
+			GD.PushWarning("Margin on player's collider shape is over 0.01, may snag on stair steps");
 	}
 
-	/// <summary>
-	/// Enables the character to walk up stairs. Call before MoveAndSlide().
-	/// </summary>
-	protected void HandleStairs()
+	public override void _PhysicsProcess(double delta)
 	{
-		if (IsOnFloor() == false || GetLastSlideCollision() == null)
-		{
-			_separator.Disabled = true;
-			return;
-		}
+		WasGrounded = Grounded;
+		Grounded = IsOnFloor();
+		DesiredVelocity = Vector3.Zero;
+	}
+	public void MoveAndStairStep()
+	{
+		StairStepUp();
+		MoveAndSlide();
+		StairStepDown();
+	}
+	protected void StairStepDown()
+	{
+		// Not on the ground last stair step, or currently jumping? Don't snap to the ground
+		// Prevents from suddenly snapping when you're falling
+		if (WasGrounded == false || Velocity.Y >= 0) return;
 
-		var localPos = ToLocal(GetLastSlideCollision().GetPosition());
-		localPos.Y = 0;
-
-		var dir = (localPos * new Vector3(1, 0, 1)).Normalized();
-		localPos += dir * _stepMargin;
-		localPos = localPos.LimitLength(_cylinderRadius + _stepMargin);
-		localPos.Y = _rayShapeLocalHeight;
-
-		_rayCast.Position = localPos;
-		_rayCast.ForceUpdateTransform();
-		_rayCast.ForceRaycastUpdate();
-
-		// Don't walk up stupid steep slopes
-		var angle = _rayCast.GetCollisionNormal().AngleTo(UpDirection);
-		if (angle > FloorMaxAngle)
-		{
-			return;
-		}
+		// MoveAndSlide() kept us on the floor so no need to do anything
+		if (IsOnFloor()) return;
 		
-		// The separator handles moving the character up the step
-		_separator.Disabled = false;
-		_separator.Position = localPos;
+		var result = new PhysicsTestMotionResult3D();
+		var parameters = new PhysicsTestMotionParameters3D();
+
+		parameters.From = GlobalTransform;
+		parameters.Motion = Vector3.Down * _stepHeight;
+		parameters.Margin = _colliderMargin;
+
+		if (!PhysicsServer3D.BodyTestMotion(GetRid(), parameters, result)) return;
+		
+		GlobalTransform = GlobalTransform.Translated(result.GetTravel());
+		ApplyFloorSnap();
+	}
+
+	protected void StairStepUp()
+	{
+		// Skip stair step if in the air (unless forced)
+		if (!Grounded && ForceStairStep == false) return;
+		
+		var horizontalVelocity = Velocity * _horizontal;
+		var testingVelocity = horizontalVelocity;
+
+		if (horizontalVelocity == Vector3.Zero) 
+			testingVelocity = DesiredVelocity;
+			
+		// Not moving or attempting to move, skip stair check
+		if (testingVelocity == Vector3.Zero) return;
+
+		var result = new PhysicsTestMotionResult3D();
+		var parameters = new PhysicsTestMotionParameters3D();
+
+		// Transform gets reused for every check
+		var transform = GlobalTransform;
+		
+		// Fun fact: You don't need to pass 'delta' everywhere if you just wanna use this instead.
+		var distance = testingVelocity * (float)GetPhysicsProcessDeltaTime();
+		parameters.From = transform;
+		parameters.Motion = distance;
+		parameters.Margin = _colliderMargin;
+
+		// No stair step to bother with because we're not hitting anything
+		if (PhysicsServer3D.BodyTestMotion(GetRid(), parameters, result) == false)
+			return;
+
+		//Move to collision
+		var remainder = result.GetRemainder();
+		transform = transform.Translated(result.GetTravel());
+
+		// Raise up to ceiling - can't walk on steps if there's a low ceiling
+		var stepUp = _stepHeight * Vector3.Up;
+		parameters.From = transform;
+		parameters.Motion = stepUp;
+		PhysicsServer3D.BodyTestMotion(GetRid(), parameters, result);
+		transform = transform.Translated(result.GetTravel()); // GetTravel will be full length if we didn't hit anything
+		var stepUpDistance = result.GetTravel().Length();
+
+		// Move forward remaining distance
+		parameters.From = transform;
+		parameters.Motion = remainder;
+		PhysicsServer3D.BodyTestMotion(GetRid(), parameters, result);
+		transform = transform.Translated(result.GetTravel());
+		
+		// And set the collider back down again
+		parameters.From = transform;
+		// But no further than how far we stepped up
+		parameters.Motion = Vector3.Down * stepUpDistance;
+		
+		//Don't bother with the rest if we're not actually gonna land back down on something
+		if (PhysicsServer3D.BodyTestMotion(GetRid(), parameters, result) == false)
+			return;
+		
+		transform = transform.Translated(result.GetTravel());
+		
+		var surfaceNormal = result.GetCollisionNormal();
+		if (surfaceNormal.AngleTo(Vector3.Up) > FloorMaxAngle) return; //Can't stand on the thing we're trying to step on anyway
+		
+		var gp = GlobalPosition;
+		gp.Y = transform.Origin.Y;
+		GlobalPosition = gp;
 	}
 }
