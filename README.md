@@ -11,3 +11,7 @@ Mainly tested with the Jolt physics engine and cylinder colliders, not guarantee
 3. Every frame, set `DesiredVelocity` to the desired direction of movement.
 4. Call `MoveAndStairStep()` instead of calling `MoveAndSlide()`.
 5. Done!
+
+### Important:
+
+Ensure your character collider's margin value is set low - at most 0.01. Anything higher might cause snags. If you find that you're still snagging on ledges, lower it some more.
