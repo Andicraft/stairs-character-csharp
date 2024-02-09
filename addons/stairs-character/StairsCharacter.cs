@@ -58,9 +58,6 @@ public partial class StairsCharacter : CharacterBody3D
 		// Not on the ground last stair step, or currently jumping? Don't snap to the ground
 		// Prevents from suddenly snapping when you're falling
 		if (WasGrounded == false || Velocity.Y >= 0) return;
-
-		// MoveAndSlide() kept us on the floor so no need to do anything
-		if (IsOnFloor()) return;
 		
 		var result = new PhysicsTestMotionResult3D();
 		var parameters = new PhysicsTestMotionParameters3D();
